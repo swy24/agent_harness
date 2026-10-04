@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acme Bank Assistant</title>
+<style>
+  :root { --bg:#f4f6fa; --card:#fff; --ink:#1b2333; --muted:#6b7385; --brand:#0b5cff; --me:#e8efff; --line:#e3e7ef; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f141c; --card:#171e29; --ink:#e7ebf3; --muted:#97a0b3; --brand:#5b8cff; --me:#1f2b45; --line:#263042; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:720px; margin:0 auto; padding:24px 16px; height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+  h1 { font-size:18px; margin:0; }
+  .muted { color:var(--muted); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; }
+  #login { max-width:360px; margin:10vh auto 0; display:grid; gap:10px; }
+  input, button { font:inherit; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); }
+  button { background:var(--brand); color:#fff; border:0; cursor:pointer; }
+  button.link { background:none; color:var(--brand); padding:0; }
+  #chat { flex:1; display:none; flex-direction:column; min-height:0; }
+  #log { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px; }
+  .msg { max-width:85%; padding:10px 14px; border-radius:12px; white-space:pre-wrap; }
+  .bot { background:var(--card); border:1px solid var(--line); align-self:flex-start; }
+  .me { background:var(--me); align-self:flex-end; }
+  .trace { font-size:11px; color:var(--muted); margin-top:4px; }
+  form.send { display:flex; gap:8px; margin-top:12px; }
+  form.send input { flex:1; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chips button { background:var(--card); color:var(--ink); border:1px solid var(--line); font-size:13px; padding:6px 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Acme Bank · Support Assistant</h1><span id="who" class="muted"></span></header>
+
+  <form id="login" class="card">
+    <strong>Sign in (mock bank IdP)</strong>
+    <input id="u" placeholder="username (john / sanjay / priya)" autocomplete="username" required>
+    <input id="p" type="password" placeholder="password (e.g. john123)" autocomplete="current-password" required>
+    <button>Sign in</button>
+    <span id="err" class="muted"></span>
+  </form>
+
+  <section id="chat">
+    <div id="log"></div>
+    <div class="chips" id="chips"></div>
+    <form class="send" id="send"><input id="m" placeholder="Ask about your balance, transactions, checkbook…" maxlength="1000" autocomplete="off"><button>Send</button></form>
+  </section>
+</div>
+<script>
+let token = null, sessionId = null;
+const $ = id => document.getElementById(id);
+const samples = ["What is my account balance?", "What is my balance and my last 5 transactions?",
+  "Was the Amazon charge one I flagged as suspicious before?", "I need a new checkbook",
+  "Increase my credit card limit to 5 lakhs. My card is 4111 1111 1111 1111", "Analyse my spending this month"];
+
+function add(text, cls, trace) {
+  const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text;
+  if (trace) { const t = document.createElement('div'); t.className = 'trace'; t.textContent = 'trace ' + trace; d.appendChild(t); }
+  $('log').appendChild(d); $('log').scrollTop = 1e9;
+}
+
+$('login').onsubmit = async e => {
+  e.preventDefault(); $('err').textContent = '';
+  const r = await fetch('/auth/login', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({username:$('u').value, password:$('p').value})});
+  if (!r.ok) { $('err').textContent = (await r.json()).detail; return; }
+  const j = await r.json(); token = j.access_token;
+  $('login').style.display = 'none'; $('chat').style.display = 'flex';
+  $('who').innerHTML = `${j.name} · ${j.tier} · <button class="link" onclick="location.reload()">sign out</button>`;
+  add(`Welcome ${j.name}! How can I help you today?`, 'bot');
+  samples.forEach(s => { const b = document.createElement('button'); b.type='button'; b.textContent = s;
+    b.onclick = () => { $('m').value = s; $('send').requestSubmit(); }; $('chips').appendChild(b); });
+};
+
+$('send').onsubmit = async e => {
+  e.preventDefault(); const text = $('m').value.trim(); if (!text) return;
+  $('m').value = ''; add(text, 'me'); add('…', 'bot');
+  const pending = $('log').lastChild;
+  try {
+    const r = await fetch('/api/chat', {method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':'Bearer ' + token},
+      body: JSON.stringify({message:text, session_id:sessionId})});
+    const j = await r.json(); pending.remove();
+    if (!r.ok) { add('⚠ ' + j.detail, 'bot'); if (r.status === 401) location.reload(); return; }
+    sessionId = j.session_id; add(j.reply, 'bot', j.trace_id);
+  } catch (err) { pending.remove(); add('⚠ network error', 'bot'); }
+};
+</script>
+</body>
+</html>
